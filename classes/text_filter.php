@@ -17,6 +17,24 @@ namespace filter_panoptoltibutton;
  */
 class text_filter extends \core_filters\text_filter {
     /**
+     * Load the editor integration on pages where this filter is active.
+     *
+     * @param \moodle_page $page Current page.
+     * @param \context $context Current context.
+     */
+    public function setup($page, $context) {
+        global $CFG;
+
+        if (!$page->requires->should_create_one_time_item_now('filter_panoptoltibutton-editor')) {
+            return;
+        }
+
+        $page->requires->js_call_amd('filter_panoptoltibutton/editor', 'init', [[
+            'wwwroot' => $CFG->wwwroot,
+        ]]);
+    }
+
+    /**
      * Expand Panopto markers in rendered HTML.
      *
      * @param string $text Text to filter.
@@ -24,7 +42,8 @@ class text_filter extends \core_filters\text_filter {
      * @return string Filtered text.
      */
     public function filter($text, array $options = []) {
-        if ($text === '' || ($options['stage'] ?? '') !== 'post_clean') {
+        if ($text === '' || ($options['stage'] ?? '') !== 'post_clean'
+                || stripos($text, 'panopto-embed') === false) {
             return $text;
         }
 
@@ -60,9 +79,7 @@ class text_filter extends \core_filters\text_filter {
             'resourcelinkid' => (string) $query['resourcelinkid'],
         ];
 
-        if (isset($query['custom_b64'])) {
-            $allowed['custom_b64'] = $query['custom_b64'];
-        } else {
+        if (!empty($query['custom'])) {
             $allowed['custom'] = $query['custom'];
         }
 
@@ -73,7 +90,14 @@ class text_filter extends \core_filters\text_filter {
         $iframeurl = (new \moodle_url('/lib/editor/tiny/plugins/panoptoltibutton/view.php', $allowed))
             ->out(false);
 
-        return '<iframe src="' . s($iframeurl) . '" allowfullscreen="true"></iframe>';
+        $dimensions = '';
+        foreach (['displaywidth' => 'width', 'displayheight' => 'height'] as $parameter => $attribute) {
+            if (!empty($query[$parameter]) && preg_match('/^[1-9][0-9]{0,3}$/', (string) $query[$parameter])) {
+                $dimensions .= ' ' . $attribute . '="' . $query[$parameter] . '"';
+            }
+        }
+
+        return '<iframe src="' . s($iframeurl) . '"' . $dimensions . ' allowfullscreen="true"></iframe>';
     }
 
     /**
@@ -86,11 +110,15 @@ class text_filter extends \core_filters\text_filter {
         global $CFG;
 
         $wwwroot = parse_url($CFG->wwwroot);
+        $rootpath = rtrim($wwwroot['path'] ?? '', '/');
         return !empty($parts['host'])
             && !empty($wwwroot['host'])
+            && empty($parts['user'])
+            && empty($parts['pass'])
+            && strcasecmp($parts['scheme'] ?? '', $wwwroot['scheme'] ?? '') === 0
             && strcasecmp($parts['host'], $wwwroot['host']) === 0
             && ($parts['port'] ?? null) === ($wwwroot['port'] ?? null)
-            && ($parts['path'] ?? '') === '/lib/editor/tiny/plugins/panoptoltibutton/view.php';
+            && ($parts['path'] ?? '') === $rootpath . '/lib/editor/tiny/plugins/panoptoltibutton/view.php';
     }
 
     /**
@@ -100,19 +128,61 @@ class text_filter extends \core_filters\text_filter {
      * @return bool Whether parameters are safe to use.
      */
     private function has_valid_launch_parameters(array $query): bool {
-        $hascustom = isset($query['custom_b64']) || isset($query['custom']);
-        $validresource = isset($query['resourcelinkid'])
-            && preg_match('/^[a-zA-Z0-9_-]+$/', (string) $query['resourcelinkid']);
-        $validcustom = !$hascustom || (isset($query['custom_b64'])
-            ? preg_match('/^[a-zA-Z0-9_-]+$/', (string) $query['custom_b64'])
-            : json_decode((string) $query['custom'], true) !== null);
+        foreach (['course', 'ltitypeid', 'resourcelinkid'] as $required) {
+            if (!isset($query[$required]) || !is_string($query[$required])) {
+                return false;
+            }
+        }
 
-        return isset($query['course'], $query['ltitypeid'])
-            && ctype_digit((string) $query['course'])
-            && ctype_digit((string) $query['ltitypeid'])
-            && $validresource
-            && $hascustom
-            && $validcustom;
+        if (!preg_match('/^[1-9][0-9]*$/', $query['course'])
+                || !preg_match('/^[1-9][0-9]*$/', $query['ltitypeid'])
+                || !preg_match('/^[a-zA-Z0-9_-]+$/', $query['resourcelinkid'])) {
+            return false;
+        }
+
+        if (isset($query['custom']) && $query['custom'] !== '') {
+            if (!is_string($query['custom'])) {
+                return false;
+            }
+
+            $decodedcustom = json_decode($query['custom'], true);
+            if (!is_array($decodedcustom) || json_last_error() !== JSON_ERROR_NONE) {
+                return false;
+            }
+        }
+
+        if (isset($query['contenturl']) && !is_string($query['contenturl'])) {
+            return false;
+        }
+
+        return $this->is_expected_panopto_tool((int) $query['course'], (int) $query['ltitypeid']);
+    }
+
+    /**
+     * Confirm that the LTI type is the Panopto tool configured for the course.
+     *
+     * @param int $courseid Moodle course ID.
+     * @param int $ltitypeid LTI type ID.
+     * @return bool Whether the type is the expected Panopto tool.
+     */
+    protected function is_expected_panopto_tool(int $courseid, int $ltitypeid): bool {
+        global $CFG, $DB;
+
+        static $results = [];
+        $cachekey = $courseid . ':' . $ltitypeid;
+        if (array_key_exists($cachekey, $results)) {
+            return $results[$cachekey];
+        }
+
+        $utilitypath = $CFG->dirroot . '/blocks/panopto/lib/lti/panoptoblock_lti_utility.php';
+        if (!$DB->record_exists('course', ['id' => $courseid]) || !is_readable($utilitypath)) {
+            return $results[$cachekey] = false;
+        }
+
+        require_once($utilitypath);
+        $tool = \panoptoblock_lti_utility::get_course_tool($courseid);
+
+        return $results[$cachekey] = !empty($tool->id) && (int) $tool->id === $ltitypeid;
     }
 }
 

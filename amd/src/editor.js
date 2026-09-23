@@ -4,228 +4,169 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Preserve Panopto Tiny embeds as safe links in stored HTML.
+ * Saves Panopto iframes in Tiny content as marker links, which Moodle does not remove when cleaning HTML.
  *
  * @module     filter_panoptoltibutton/editor
  * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+import Config from 'core/config';
+
 const markerClass = 'panopto-embed';
-const editorFlag = 'panoptoMarkerFilterAttached';
+const toolOption = 'tiny_panoptoltibutton/plugin:tool';
+const dimensions = {width: 'displaywidth', height: 'displayheight'};
 const dimensionPattern = /^[1-9][0-9]{0,3}$/;
-let siteUrl;
-let launchPath;
-let tinyListenerAttached = false;
-let initialised = false;
+
+let launchUrl;
+let defaultTitle;
 
 /**
- * Return a validated local Panopto launch URL.
+ * Parse a URL, returning it only if it points to the Panopto launch page of this site.
  *
- * @param {string} value URL to validate.
+ * @param {string} value
  * @returns {URL|null}
  */
-const getLaunchUrl = value => {
-    let url;
+const getLaunchUrl = (value) => {
     try {
-        url = new URL(value, siteUrl);
+        const url = new URL(value, launchUrl);
+        return url.origin === launchUrl.origin && url.pathname === launchUrl.pathname ? url : null;
     } catch (error) {
         return null;
     }
+};
 
-    if (url.origin !== siteUrl.origin || url.pathname !== launchPath || url.username || url.password) {
-        return null;
-    }
+/**
+ * Get the ID of the course Panopto tool that tiny_panoptoltibutton passes to the editor.
+ *
+ * @param {TinyMCE} editor
+ * @returns {string|null}
+ */
+const getToolId = (editor) => {
+    const tool = editor.options.isRegistered(toolOption) ? editor.options.get(toolOption) : null;
+    return tool?.id ? String(tool.id) : null;
+};
 
-    const required = {
-        course: /^[1-9][0-9]*$/,
-        ltitypeid: /^[1-9][0-9]*$/,
-        resourcelinkid: /^[a-zA-Z0-9_-]+$/,
-    };
+/**
+ * Serialise Panopto iframes as marker links.
+ *
+ * @param {TinyMCE} editor
+ */
+const addSerializerFilter = (editor) => {
+    const {Node} = editor.editorManager.html;
 
-    for (const [parameter, pattern] of Object.entries(required)) {
-        const values = url.searchParams.getAll(parameter);
-        if (values.length !== 1 || !pattern.test(values[0])) {
-            return null;
+    editor.serializer.addNodeFilter('iframe', (iframes) => iframes.forEach((iframe) => {
+        const url = getLaunchUrl(iframe.attr('src'));
+        if (!url) {
+            return;
         }
-    }
 
-    const customValues = url.searchParams.getAll('custom');
-    if (customValues.length > 1) {
-        return null;
-    }
-
-    if (customValues.length === 1 && customValues[0] !== '') {
-        try {
-            const custom = JSON.parse(customValues[0]);
-            if (custom === null || typeof custom !== 'object') {
-                return null;
+        Object.entries(dimensions).forEach(([attribute, parameter]) => {
+            if (dimensionPattern.test(iframe.attr(attribute))) {
+                url.searchParams.set(parameter, iframe.attr(attribute));
             }
-        } catch (error) {
-            return null;
-        }
-    }
+        });
 
-    return url;
+        const marker = Node.create('a', {'class': markerClass, href: url.toString()});
+        const text = Node.create('#text');
+        text.value = iframe.attr('title') || defaultTitle;
+        marker.append(text);
+        iframe.replace(marker);
+    }));
 };
 
 /**
- * Copy a numeric iframe dimension to the marker URL.
+ * Show marker links as iframes while editing, if they launch the course Panopto tool.
  *
- * @param {HTMLIFrameElement} iframe Source iframe.
- * @param {URL} url Marker URL.
- * @param {string} attribute Iframe attribute.
- * @param {string} parameter URL parameter.
+ * @param {TinyMCE} editor
  */
-const copyDimension = (iframe, url, attribute, parameter) => {
-    const value = iframe.getAttribute(attribute);
-    if (value && dimensionPattern.test(value)) {
-        url.searchParams.set(parameter, value);
-    } else {
-        url.searchParams.delete(parameter);
-    }
-};
+const addParserFilter = (editor) => {
+    const {Node} = editor.editorManager.html;
 
-/**
- * Convert matching Panopto iframes in serialized editor content to markers.
- *
- * @param {string} content Editor HTML.
- * @returns {string}
- */
-const storeMarkers = content => {
-    const template = document.createElement('template');
-    template.innerHTML = content;
+    editor.parser.addNodeFilter('a', (links) => {
+        const toolId = getToolId(editor);
+        links.forEach((link) => {
+            const isMarker = (link.attr('class') || '').split(/\s+/).includes(markerClass);
+            const url = toolId && isMarker ? getLaunchUrl(link.attr('href')) : null;
+            if (!url || url.searchParams.get('ltitypeid') !== toolId) {
+                return;
+            }
 
-    template.content.querySelectorAll('iframe[src]').forEach(iframe => {
-        const url = getLaunchUrl(iframe.getAttribute('src'));
-        if (!url) {
-            return;
-        }
+            const title = link.firstChild?.type === 3 ? link.firstChild.value.trim() : '';
+            const attributes = {title: title || defaultTitle, allowfullscreen: 'true'};
+            Object.entries(dimensions).forEach(([attribute, parameter]) => {
+                if (dimensionPattern.test(url.searchParams.get(parameter))) {
+                    attributes[attribute] = url.searchParams.get(parameter);
+                }
+                url.searchParams.delete(parameter);
+            });
 
-        copyDimension(iframe, url, 'width', 'displaywidth');
-        copyDimension(iframe, url, 'height', 'displayheight');
-
-        const marker = document.createElement('a');
-        marker.className = markerClass;
-        marker.href = url.toString();
-        marker.textContent = iframe.getAttribute('title') || 'Panopto video';
-        iframe.replaceWith(marker);
-    });
-
-    return template.innerHTML;
-};
-
-/**
- * Render stored markers as iframes inside an editor.
- *
- * @param {HTMLElement|null} body Tiny editor body.
- */
-const renderMarkers = body => {
-    if (!body) {
-        return;
-    }
-
-    body.querySelectorAll(`a.${markerClass}[href]`).forEach(marker => {
-        const url = getLaunchUrl(marker.getAttribute('href'));
-        if (!url) {
-            return;
-        }
-
-        const iframe = document.createElement('iframe');
-        iframe.src = url.toString();
-        iframe.title = marker.textContent.trim() || 'Panopto video';
-        iframe.allowFullscreen = true;
-
-        const width = url.searchParams.get('displaywidth');
-        const height = url.searchParams.get('displayheight');
-        url.searchParams.delete('displaywidth');
-        url.searchParams.delete('displayheight');
-        iframe.src = url.toString();
-
-        if (width && dimensionPattern.test(width)) {
-            iframe.width = width;
-        }
-        if (height && dimensionPattern.test(height)) {
-            iframe.height = height;
-        }
-
-        marker.replaceWith(iframe);
+            link.replace(Node.create('iframe', {src: url.toString(), ...attributes}));
+        });
     });
 };
 
 /**
- * Attach marker handling to one Tiny editor.
+ * Add the marker handling to a Tiny editor.
  *
- * @param {object} editor Tiny editor instance.
+ * @param {TinyMCE} editor
  */
-const attachEditor = editor => {
-    if (!editor || editor[editorFlag]) {
-        return;
-    }
-
-    editor[editorFlag] = true;
-    editor.on('GetContent', event => {
-        if (typeof event.content === 'string') {
-            event.content = storeMarkers(event.content);
-        }
-    });
-    editor.on('SetContent', () => renderMarkers(editor.getBody()));
-    editor.on('init', () => renderMarkers(editor.getBody()));
-
-    if (editor.initialized) {
-        renderMarkers(editor.getBody());
-    }
-};
-
-/**
- * Attach to the Tiny global and all current editors.
- *
- * @returns {boolean} Whether Tiny was found.
- */
-const discoverTiny = () => {
-    const tiny = window.tinymce || window.tinyMCE;
-    if (!tiny) {
-        return false;
-    }
-
-    if (!tinyListenerAttached && typeof tiny.on === 'function') {
-        tiny.on('AddEditor', event => attachEditor(event.editor));
-        tinyListenerAttached = true;
-    }
-
-    (tiny.editors || []).forEach(attachEditor);
-    return true;
-};
-
-/**
- * Initialise the editor integration.
- *
- * @param {object} config Filter configuration.
- */
-export const init = config => {
-    if (initialised) {
-        return;
-    }
-
-    try {
-        siteUrl = new URL(config.wwwroot);
-    } catch (error) {
-        window.console.error('Panopto embed filter received an invalid Moodle URL.', error);
-        return;
-    }
-
-    launchPath = `${siteUrl.pathname.replace(/\/$/, '')}/lib/editor/tiny/plugins/panoptoltibutton/view.php`;
-    initialised = true;
-
-    let attempts = 0;
-    const findTiny = () => {
-        if (discoverTiny() || attempts >= 100) {
-            return;
-        }
-        attempts++;
-        window.setTimeout(findTiny, 100);
+const setupEditor = (editor) => {
+    const addFilters = () => {
+        addParserFilter(editor);
+        addSerializerFilter(editor);
     };
-    findTiny();
+
+    if (!editor.parser) {
+        editor.on('PreInit', addFilters);
+        return;
+    }
+
+    addFilters();
+    if (editor.initialized) {
+        // The content was parsed before the filters existed.
+        editor.setContent(editor.getContent());
+    }
+};
+
+/**
+ * Add the marker handling to all current and future Tiny editors on the page.
+ *
+ * @param {string} title Text used for embeds without a title.
+ */
+export const init = (title) => {
+    if (launchUrl) {
+        return;
+    }
+    launchUrl = new URL(`${Config.wwwroot}/lib/editor/tiny/plugins/panoptoltibutton/view.php`);
+    defaultTitle = title;
+
+    const setupTiny = () => {
+        window.tinymce.on('AddEditor', ({editor}) => setupEditor(editor));
+        window.tinymce.get().forEach(setupEditor);
+    };
+
+    if (window.tinymce) {
+        setupTiny();
+        return;
+    }
+
+    // Moodle only loads TinyMCE when an editor is created, possibly after this module.
+    const onLoad = () => {
+        if (window.tinymce) {
+            document.removeEventListener('load', onLoad, true);
+            setupTiny();
+        }
+    };
+    document.addEventListener('load', onLoad, true);
 };

@@ -5,11 +5,22 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace filter_panoptoltibutton;
 
+use core\output\html_writer;
+use core\url;
+
 /**
- * Tests for the Panopto marker filter.
+ * Tests for the Panopto Tiny Editor embeds filter.
  *
  * @package    filter_panoptoltibutton
  * @copyright  2026 Panopto
@@ -18,147 +29,155 @@ namespace filter_panoptoltibutton;
  */
 final class text_filter_test extends \advanced_testcase {
     /**
-     * Build a valid marker.
+     * Build a marker link as saved by the editor integration.
      *
-     * @param array $parameters Query parameter overrides.
-     * @param string $label Marker label.
-     * @return string Marker HTML.
+     * @param array $params Launch parameter overrides.
+     * @param string $text Link text.
+     * @return string
      */
-    private function marker(array $parameters = [], string $label = 'Panopto video'): string {
-        $parameters += [
+    private function marker(array $params = [], string $text = 'Panopto video'): string {
+        $url = new url('/lib/editor/tiny/plugins/panoptoltibutton/view.php', $params + [
             'course' => 2,
             'ltitypeid' => 3,
             'resourcelinkid' => 'resource_123',
             'custom' => json_encode(['video' => 'abc']),
-        ];
-        $url = new \moodle_url('/lib/editor/tiny/plugins/panoptoltibutton/view.php', $parameters);
+        ]);
 
-        return \html_writer::link($url, $label, ['class' => 'panopto-embed']);
+        return html_writer::link($url, $text, ['class' => 'panopto-embed']);
     }
 
     /**
-     * Return the filter under test.
+     * Get a filter for which every course uses Panopto LTI tool 3.
      *
+     * @param \core\context|null $context Filter context, the system context by default.
      * @return text_filter
      */
-    private function get_filter(): text_filter {
-        return new class(\context_system::instance(), []) extends text_filter {
-            /**
-             * Isolate marker tests from Panopto block database configuration.
-             *
-             * @param int $courseid Moodle course ID.
-             * @param int $ltitypeid LTI type ID.
-             * @return bool
-             */
-            protected function is_expected_panopto_tool(int $courseid, int $ltitypeid): bool {
-                return true;
+    private function get_filter(?\core\context $context = null): text_filter {
+        return new class($context ?? \core\context\system::instance(), []) extends text_filter {
+            #[\Override]
+            protected function get_course_tool_id(int $courseid): int {
+                return 3;
             }
         };
     }
 
     /**
-     * The marker must not expand before HTML purification.
+     * Markers are only expanded after the text has been cleaned.
      */
     public function test_marker_is_only_expanded_post_clean(): void {
         $marker = $this->marker();
         $filter = $this->get_filter();
 
-        $this->assertSame($marker, $filter->filter($marker, ['stage' => 'pre_clean']));
-        $this->assertStringContainsString('<iframe ', $filter->filter($marker, ['stage' => 'post_clean']));
+        $this->assertSame($marker, $filter->filter_stage_pre_clean($marker, []));
+        $this->assertSame($marker, $filter->filter_stage_string($marker, []));
+        $this->assertStringContainsString('<iframe ', $filter->filter_stage_post_clean($marker, []));
     }
 
     /**
-     * Multiple markers retain their own launch details and dimensions.
+     * Each marker keeps its own launch parameters, dimensions and title.
      */
     public function test_multiple_markers_are_expanded(): void {
-        $first = $this->marker([
-            'resourcelinkid' => 'first',
-            'displaywidth' => '640',
-            'displayheight' => '360',
-        ]);
-        $second = $this->marker(['resourcelinkid' => 'second'], 'Second video');
+        $first = $this->marker(['resourcelinkid' => 'first', 'displaywidth' => '640', 'displayheight' => '360'], '');
+        $second = $this->marker(['resourcelinkid' => 'second'], 'Q&amp;A session');
 
-        $result = $this->get_filter()->filter($first . '<p>Between</p>' . $second, ['stage' => 'post_clean']);
+        $result = $this->get_filter()->filter($first . '<p>Between</p>' . $second);
 
         $this->assertSame(2, substr_count($result, '<iframe '));
+        $this->assertStringContainsString('</iframe><p>Between</p><iframe ', $result);
         $this->assertStringContainsString('resourcelinkid=first', $result);
         $this->assertStringContainsString('resourcelinkid=second', $result);
         $this->assertStringContainsString(' width="640" height="360"', $result);
+        $this->assertStringContainsString(' title="Panopto video"', $result);
+        $this->assertStringContainsString(' title="Q&amp;A session"', $result);
+        $this->assertStringContainsString(' loading="lazy"', $result);
         $this->assertStringNotContainsString('displaywidth=', $result);
         $this->assertStringNotContainsString('displayheight=', $result);
     }
 
     /**
-     * Empty custom data emitted by the original Tiny plugin is valid.
+     * The launch uses the course the content is displayed in.
+     */
+    public function test_launch_uses_display_course(): void {
+        $this->resetAfterTest();
+        $course = $this->getDataGenerator()->create_course();
+        $filter = $this->get_filter(\core\context\course::instance($course->id));
+
+        $result = $filter->filter($this->marker(['course' => $course->id + 1]));
+
+        $this->assertStringContainsString('view.php?course=' . $course->id . '&amp;ltitypeid=3&amp;', $result);
+    }
+
+    /**
+     * Empty custom data, as written by tiny_panoptoltibutton for some videos, is accepted.
      */
     public function test_empty_custom_parameter_is_accepted(): void {
-        $result = $this->get_filter()->filter($this->marker(['custom' => '']), ['stage' => 'post_clean']);
+        $result = $this->get_filter()->filter($this->marker(['custom' => '']));
 
         $this->assertStringContainsString('<iframe ', $result);
+        $this->assertStringNotContainsString('custom=', $result);
     }
 
     /**
-     * A marker for an LTI tool other than the course Panopto tool remains inert.
+     * Markers for an LTI tool other than the course Panopto tool are not expanded.
      */
-    public function test_unexpected_lti_tool_is_not_expanded(): void {
-        $filter = new class(\context_system::instance(), []) extends text_filter {
-            /**
-             * Reject the test tool.
-             *
-             * @param int $courseid Moodle course ID.
-             * @param int $ltitypeid LTI type ID.
-             * @return bool
-             */
-            protected function is_expected_panopto_tool(int $courseid, int $ltitypeid): bool {
-                return false;
-            }
-        };
-        $marker = $this->marker();
+    public function test_other_lti_tool_is_not_expanded(): void {
+        $marker = $this->marker(['ltitypeid' => 4]);
 
-        $this->assertSame($marker, $filter->filter($marker, ['stage' => 'post_clean']));
+        $this->assertSame($marker, $this->get_filter()->filter($marker));
     }
 
     /**
-     * External, malformed, and incomplete markers remain inert links.
+     * External, malformed and incomplete markers are not expanded.
      */
     public function test_invalid_markers_are_not_expanded(): void {
         global $CFG;
 
-        $validurl = (new \moodle_url('/lib/editor/tiny/plugins/panoptoltibutton/view.php', [
-            'course' => 2,
-            'ltitypeid' => 3,
-            'resourcelinkid' => 'resource_123',
-            'custom' => '{}',
-        ]))->out(false);
-        $invalidmarkers = [
-            '<a class="panopto-embed" href="https://example.invalid/view.php?course=2">External</a>',
-            '<a class="panopto-embed" href="' . s(str_replace('custom=%7B%7D', 'custom=not-json', $validurl))
-                . '">Malformed</a>',
-            '<a class="panopto-embed" href="' . s($CFG->wwwroot
-                . '/lib/editor/tiny/plugins/panoptoltibutton/view.php?course[]=2&amp;ltitypeid=3'
-                . '&amp;resourcelinkid=resource_123') . '">Array</a>',
+        $launchurl = $CFG->wwwroot . '/lib/editor/tiny/plugins/panoptoltibutton/view.php';
+        $markers = [
+            'external' => '<a class="panopto-embed" href="https://example.com/lib/editor/tiny/plugins/panoptoltibutton/view.php'
+                . '?ltitypeid=3&amp;resourcelinkid=abc">Video</a>',
+            'other page' => '<a class="panopto-embed" href="' . $CFG->wwwroot . '/course/view.php'
+                . '?ltitypeid=3&amp;resourcelinkid=abc">Video</a>',
+            'array parameter' => '<a class="panopto-embed" href="' . $launchurl
+                . '?ltitypeid[]=3&amp;resourcelinkid=abc">Video</a>',
+            'malformed custom' => $this->marker(['custom' => 'not-json']),
+            'invalid resource link' => $this->marker(['resourcelinkid' => 'abc def']),
+            'missing resource link' => $this->marker(['resourcelinkid' => '']),
         ];
         $filter = $this->get_filter();
 
-        foreach ($invalidmarkers as $marker) {
-            $this->assertSame($marker, $filter->filter($marker, ['stage' => 'post_clean']));
+        foreach ($markers as $name => $marker) {
+            $this->assertSame($marker, $filter->filter($marker), $name);
         }
     }
 
     /**
-     * Moodle installations below a URL path are supported.
+     * Moodle sites installed in a subdirectory are supported.
      */
     public function test_wwwroot_subdirectory_is_supported(): void {
         global $CFG;
 
-        $oldwwwroot = $CFG->wwwroot;
-        $CFG->wwwroot = 'https://moodle.example.test/learning';
-        try {
-            $result = $this->get_filter()->filter($this->marker(), ['stage' => 'post_clean']);
-            $this->assertStringContainsString('<iframe ', $result);
-            $this->assertStringContainsString('/learning/lib/editor/tiny/plugins/panoptoltibutton/view.php', $result);
-        } finally {
-            $CFG->wwwroot = $oldwwwroot;
-        }
+        $this->resetAfterTest();
+        $CFG->wwwroot = 'https://moodle.example.com/learning';
+
+        $result = $this->get_filter()->filter($this->marker());
+
+        $this->assertStringContainsString(
+            'src="https://moodle.example.com/learning/lib/editor/tiny/plugins/panoptoltibutton/view.php?',
+            $result
+        );
+    }
+
+    /**
+     * Markers stay links on the assignment grading table.
+     */
+    public function test_assignment_grading_page_is_skipped(): void {
+        global $PAGE;
+
+        $this->resetAfterTest();
+        $PAGE->set_pagetype('mod-assign-grading');
+        $marker = $this->marker();
+
+        $this->assertSame($marker, $this->get_filter()->filter($marker));
     }
 }

@@ -14,22 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+namespace filter_panoptoltibutton\privacy;
+
 /**
- * Version details for the Panopto Tiny Editor embeds filter.
+ * Privacy Subsystem for filter_panoptoltibutton implementing null_provider.
  *
  * @package    filter_panoptoltibutton
  * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-
-defined('MOODLE_INTERNAL') || die();
-
-$plugin->component = 'filter_panoptoltibutton';
-$plugin->version = 2026092300;
-$plugin->requires = 2024100700; // Moodle 4.5.
-$plugin->maturity = MATURITY_STABLE;
-$plugin->release = '1.2';
-$plugin->dependencies = [
-    'tiny_panoptoltibutton' => 2025112600,
-];
-
+class provider implements \core_privacy\local\metadata\null_provider {
+    /**
+     * Get the language string identifier with the component's language
+     * file to explain why this plugin stores no data.
+     *
+     * @return string
+     */
+    public static function get_reason(): string {
+        return 'privacy:metadata';
+    }
+}

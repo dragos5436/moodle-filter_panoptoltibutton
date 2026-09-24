@@ -16,6 +16,8 @@
 /**
  * Saves Panopto iframes in Tiny content as marker links, which Moodle does not remove when cleaning HTML.
  *
+ * The video title is saved as the link text.
+ *
  * @module     filter_panoptoltibutton/editor
  * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
@@ -29,7 +31,33 @@ const dimensions = {width: 'displaywidth', height: 'displayheight'};
 const dimensionPattern = /^[1-9][0-9]{0,3}$/;
 
 let launchUrl;
+let dialogueUrl;
 let defaultTitle;
+
+/** @type {WeakSet<Function>} Dialogue callbacks that record titles. */
+const recordingCallbacks = new WeakSet();
+
+/** @type {string[]} Titles of the videos that a Panopto dialogue is inserting, in insertion order. */
+let pendingTitles = [];
+
+/** @type {string} Title of the video being inserted. */
+let insertTitle = '';
+
+/**
+ * Parse a URL, returning it only if it points to the given page.
+ *
+ * @param {string} value
+ * @param {URL} page
+ * @returns {URL|null}
+ */
+const getPageUrl = (value, page) => {
+    try {
+        const url = new URL(value, page);
+        return url.origin === page.origin && url.pathname === page.pathname ? url : null;
+    } catch (error) {
+        return null;
+    }
+};
 
 /**
  * Parse a URL, returning it only if it points to the Panopto launch page of this site.
@@ -37,14 +65,7 @@ let defaultTitle;
  * @param {string} value
  * @returns {URL|null}
  */
-const getLaunchUrl = (value) => {
-    try {
-        const url = new URL(value, launchUrl);
-        return url.origin === launchUrl.origin && url.pathname === launchUrl.pathname ? url : null;
-    } catch (error) {
-        return null;
-    }
-};
+const getLaunchUrl = (value) => getPageUrl(value, launchUrl);
 
 /**
  * Get the ID of the course Panopto tool that tiny_panoptoltibutton passes to the editor.
@@ -86,7 +107,7 @@ const addSerializerFilter = (editor) => {
 };
 
 /**
- * Show marker links as iframes while editing, if they launch the course Panopto tool.
+ * Show marker links as iframes while editing, if they launch the course Panopto tool, and add titles to inserted videos.
  *
  * @param {TinyMCE} editor
  */
@@ -114,6 +135,66 @@ const addParserFilter = (editor) => {
             link.replace(Node.create('iframe', {src: url.toString(), ...attributes}));
         });
     });
+
+    editor.parser.addNodeFilter('iframe', (iframes) => {
+        if (!insertTitle) {
+            return;
+        }
+        iframes.forEach((iframe) => {
+            if (!iframe.attr('title') && getLaunchUrl(iframe.attr('src'))) {
+                iframe.attr('title', insertTitle);
+            }
+        });
+    });
+};
+
+/**
+ * Record the video titles that a tiny_panoptoltibutton dialogue receives, as it inserts iframes without a title.
+ *
+ * The dialogue passes the selected LTI content items to a function in document.CALLBACKS, which inserts each item
+ * into the active editor with mceInsertContent.
+ *
+ * @param {Window} dialogue
+ */
+const recordDialogueTitles = (dialogue) => {
+    const callbacks = dialogue.document.CALLBACKS ?? {};
+    Object.entries(callbacks).forEach(([name, callback]) => {
+        if (typeof callback !== 'function' || recordingCallbacks.has(callback)) {
+            return;
+        }
+
+        const recordTitles = (contentItems, ...args) => {
+            const items = contentItems?.['@graph'];
+            pendingTitles = Array.isArray(items)
+                ? items.map((item) => (typeof item?.title === 'string' ? item.title.trim() : ''))
+                : [];
+            try {
+                return callback.call(callbacks, contentItems, ...args);
+            } finally {
+                pendingTitles = [];
+                insertTitle = '';
+            }
+        };
+        recordingCallbacks.add(recordTitles);
+        callbacks[name] = recordTitles;
+    });
+};
+
+/**
+ * Record video titles in the tiny_panoptoltibutton dialogues opened on the page.
+ */
+const watchDialogues = () => {
+    document.addEventListener('load', ({target}) => {
+        if (target.tagName !== 'IFRAME' || !getPageUrl(target.src, dialogueUrl)) {
+            return;
+        }
+
+        const dialogue = target.contentWindow;
+        const record = () => recordDialogueTitles(dialogue);
+        record();
+        // The dialogue may set up its callbacks after the load event, but always before its content frame loads.
+        dialogue.document.addEventListener('load', record, true);
+    }, true);
 };
 
 /**
@@ -126,6 +207,13 @@ const setupEditor = (editor) => {
         addParserFilter(editor);
         addSerializerFilter(editor);
     };
+
+    // A Panopto dialogue inserts one video per mceInsertContent command.
+    editor.on('BeforeExecCommand', ({command}) => {
+        if (command.toLowerCase() === 'mceinsertcontent') {
+            insertTitle = pendingTitles.shift() ?? '';
+        }
+    });
 
     if (!editor.parser) {
         editor.on('PreInit', addFilters);
@@ -149,7 +237,9 @@ export const init = (title) => {
         return;
     }
     launchUrl = new URL(`${Config.wwwroot}/lib/editor/tiny/plugins/panoptoltibutton/view.php`);
+    dialogueUrl = new URL('panoptowrapper.html', launchUrl);
     defaultTitle = title;
+    watchDialogues();
 
     const setupTiny = () => {
         window.tinymce.on('AddEditor', ({editor}) => setupEditor(editor));

@@ -53,7 +53,7 @@ final class text_filter_test extends \advanced_testcase {
      * @return text_filter
      */
     private function get_filter(?\core\context $context = null): text_filter {
-        return new class($context ?? \core\context\system::instance(), []) extends text_filter {
+        return new class ($context ?? \core\context\system::instance(), []) extends text_filter {
             #[\Override]
             protected function get_course_tool_id(int $courseid): int {
                 return 3;
@@ -169,15 +169,31 @@ final class text_filter_test extends \advanced_testcase {
     }
 
     /**
-     * Markers stay links on the assignment grading table.
+     * Markers stay links on the assignment Submissions page by default.
      */
-    public function test_assignment_grading_page_is_skipped(): void {
+    public function test_assignment_grading_page_shows_links(): void {
         global $PAGE;
 
         $this->resetAfterTest();
         $PAGE->set_pagetype('mod-assign-grading');
-        $marker = $this->marker();
+        $marker = $this->marker([], 'Lecture 1');
 
         $this->assertSame($marker, $this->get_filter()->filter($marker));
+    }
+
+    /**
+     * Markers are embedded on the assignment Submissions page if the site is configured to.
+     */
+    public function test_assignment_grading_page_embeds_if_enabled(): void {
+        global $PAGE;
+
+        $this->resetAfterTest();
+        set_config('embedsubmissions', 1, 'filter_panoptoltibutton');
+        $PAGE->set_pagetype('mod-assign-grading');
+
+        $result = $this->get_filter()->filter($this->marker([], 'Lecture 1'));
+
+        $this->assertStringContainsString('<iframe ', $result);
+        $this->assertStringContainsString(' title="Lecture 1"', $result);
     }
 }

@@ -25,11 +25,10 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'filter_panoptoltibutton';
-$plugin->version = 2026092300;
+$plugin->version = 2026092400;
 $plugin->requires = 2024100700; // Moodle 4.5.
 $plugin->maturity = MATURITY_STABLE;
-$plugin->release = '1.2';
+$plugin->release = '1.3';
 $plugin->dependencies = [
     'tiny_panoptoltibutton' => 2025112600,
 ];
-

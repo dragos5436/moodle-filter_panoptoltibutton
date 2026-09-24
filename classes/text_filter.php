@@ -44,10 +44,7 @@ class text_filter extends \core_filters\text_filter {
 
     #[\Override]
     public function filter($text, array $options = []) {
-        global $PAGE;
-
-        // Avoid one LTI launch per submission on the assignment grading table.
-        if (stripos($text, 'panopto-embed') === false || $PAGE->pagetype === 'mod-assign-grading') {
+        if (stripos($text, 'panopto-embed') === false || $this->show_links()) {
             return $text;
         }
 
@@ -57,6 +54,17 @@ class text_filter extends \core_filters\text_filter {
     #[\Override]
     public function filter_stage_string(string $text, array $options): string {
         return $text;
+    }
+
+    /**
+     * Whether to show markers as links, which avoids one LTI launch per submission on the assignment Submissions page.
+     *
+     * @return bool
+     */
+    private function show_links(): bool {
+        global $PAGE;
+
+        return $PAGE->pagetype === 'mod-assign-grading' && !get_config('filter_panoptoltibutton', 'embedsubmissions');
     }
 
     /**
@@ -147,4 +155,3 @@ class text_filter extends \core_filters\text_filter {
         return $toolids[$courseid];
     }
 }
-

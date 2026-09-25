@@ -15,16 +15,20 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Strings for component 'filter_panoptoltibutton', language 'en'.
+ * Settings for the Panopto Tiny Editor embeds filter.
  *
  * @package    filter_panoptoltibutton
  * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-$string['defaulttitle'] = 'Panopto video';
-$string['embedsubmissions'] = 'Embed videos on the Submissions page';
-$string['embedsubmissions_desc'] = 'If enabled, Panopto videos in online text submissions are embedded on the assignment Submissions page. Otherwise, they are shown as links with the video title. Embedded videos are launched as they come into view, which can make the page slower when there are many submissions.';
-$string['filtername'] = 'Panopto Tiny Editor embeds';
-$string['pluginname'] = 'Panopto Tiny Editor embeds';
-$string['privacy:metadata'] = 'The Panopto Tiny Editor embeds filter does not store any personal data.';
+defined('MOODLE_INTERNAL') || die();
+
+if ($ADMIN->fulltree) {
+    $settings->add(new admin_setting_configcheckbox(
+        'filter_panoptoltibutton/embedsubmissions',
+        new lang_string('embedsubmissions', 'filter_panoptoltibutton'),
+        new lang_string('embedsubmissions_desc', 'filter_panoptoltibutton'),
+        0
+    ));
+}

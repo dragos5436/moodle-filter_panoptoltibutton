@@ -14,17 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+namespace filter_panoptoltibutton\privacy;
+
 /**
- * Strings for component 'filter_panoptoltibutton', language 'en'.
+ * Privacy Subsystem for filter_panoptoltibutton implementing null_provider.
  *
  * @package    filter_panoptoltibutton
  * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-
-$string['defaulttitle'] = 'Panopto video';
-$string['embedsubmissions'] = 'Embed videos on the Submissions page';
-$string['embedsubmissions_desc'] = 'If enabled, Panopto videos in online text submissions are embedded on the assignment Submissions page. Otherwise, they are shown as links with the video title. Embedded videos are launched as they come into view, which can make the page slower when there are many submissions.';
-$string['filtername'] = 'Panopto Tiny Editor embeds';
-$string['pluginname'] = 'Panopto Tiny Editor embeds';
-$string['privacy:metadata'] = 'The Panopto Tiny Editor embeds filter does not store any personal data.';
+class provider implements \core_privacy\local\metadata\null_provider {
+    /**
+     * Get the language string identifier with the component's language
+     * file to explain why this plugin stores no data.
+     *
+     * @return string
+     */
+    public static function get_reason(): string {
+        return 'privacy:metadata';
+    }
+}

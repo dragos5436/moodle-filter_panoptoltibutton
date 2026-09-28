@@ -5,20 +5,30 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Panopto Tiny Editor marker filter version.
+ * Version details for the Panopto Tiny Editor embeds filter.
  *
  * @package    filter_panoptoltibutton
- * @copyright 2026 Panopto
+ * @copyright  2026 Panopto
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2026092100;
-$plugin->requires = 2024100700;
 $plugin->component = 'filter_panoptoltibutton';
+$plugin->version = 2026092400;
+$plugin->requires = 2024100700; // Moodle 4.5.
 $plugin->maturity = MATURITY_STABLE;
-$plugin->release = '1.1';
-
+$plugin->release = '1.3';
+$plugin->dependencies = [
+    'tiny_panoptoltibutton' => 2025112600,
+];

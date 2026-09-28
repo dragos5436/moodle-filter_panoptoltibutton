@@ -74,13 +74,16 @@ class text_filter extends \core_filters\text_filter {
      * @return string
      */
     private function replace_marker(array $match): string {
+        global $CFG;
+
         try {
             $marker = new url(html_entity_decode($match[1], ENT_QUOTES | ENT_HTML5));
         } catch (\moodle_exception $e) {
             return $match[0];
         }
 
-        $launchurl = new url(self::LAUNCH_PATH);
+        // The marker URL is absolute, so the launch URL must include wwwroot to be comparable.
+        $launchurl = new url($CFG->wwwroot . self::LAUNCH_PATH);
         $params = array_filter($marker->params(), 'is_string');
         $launchparams = $marker->compare($launchurl, URL_MATCH_BASE) ? $this->get_launch_params($params) : null;
         if ($launchparams === null) {

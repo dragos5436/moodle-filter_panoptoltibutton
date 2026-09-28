@@ -44,7 +44,7 @@ let pendingTitles = [];
 let insertTitle = '';
 
 /**
- * Parse a URL, returning it only if it points to the given page.
+ * Parse a URL, returning it only if it points to the given page, without embedded credentials.
  *
  * @param {string} value
  * @param {URL} page
@@ -53,7 +53,8 @@ let insertTitle = '';
 const getPageUrl = (value, page) => {
     try {
         const url = new URL(value, page);
-        return url.origin === page.origin && url.pathname === page.pathname ? url : null;
+        const isPage = url.origin === page.origin && url.pathname === page.pathname;
+        return isPage && !url.username && !url.password ? url : null;
     } catch (error) {
         return null;
     }
@@ -84,7 +85,7 @@ const getToolId = (editor) => {
  * @param {TinyMCE} editor
  */
 const addSerializerFilter = (editor) => {
-    const {Node} = editor.editorManager.html;
+    const {Node} = window.tinymce.html;
 
     editor.serializer.addNodeFilter('iframe', (iframes) => iframes.forEach((iframe) => {
         const url = getLaunchUrl(iframe.attr('src'));
@@ -112,7 +113,7 @@ const addSerializerFilter = (editor) => {
  * @param {TinyMCE} editor
  */
 const addParserFilter = (editor) => {
-    const {Node} = editor.editorManager.html;
+    const {Node} = window.tinymce.html;
 
     editor.parser.addNodeFilter('a', (links) => {
         const toolId = getToolId(editor);

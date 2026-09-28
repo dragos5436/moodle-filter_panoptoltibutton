@@ -158,9 +158,14 @@ final class text_filter_test extends \advanced_testcase {
         global $CFG;
 
         $this->resetAfterTest();
+        $wwwroot = $CFG->wwwroot;
         $CFG->wwwroot = 'https://moodle.example.com/learning';
 
-        $result = $this->get_filter()->filter($this->marker());
+        try {
+            $result = $this->get_filter()->filter($this->marker());
+        } finally {
+            $CFG->wwwroot = $wwwroot;
+        }
 
         $this->assertStringContainsString(
             'src="https://moodle.example.com/learning/lib/editor/tiny/plugins/panoptoltibutton/view.php?',
